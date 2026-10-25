@@ -247,27 +247,64 @@
   ringEl.innerHTML = CARTA.map((c, i) => `<button type="button" class="ring-item" style="--i:${i}" data-i="${i}"><span class="n">${ROMAN[i]}</span><span><b>${c.n}</b><small>${c.d}</small></span><span class="cnt">${c.t.length} prácticas</span></button>`).join('');
   const ringItems = $$('.ring-item', ringEl);
   const STEP = 360 / CARTA.length;
-  let ringCur = 0, rot = 0;
+  let ringCur = 0, rot = 0, spinT = 0, coastRAF = 0;
+  const showCat = () => {
+    ringItems.forEach((el, k) => { el.classList.toggle('on', k === ringCur); el.setAttribute('aria-pressed', k === ringCur); });
+    tagsEl.innerHTML = CARTA[ringCur].t.map((t, k) => `<li style="--k:${k}">${t}</li>`).join('');
+  };
+  const stopSpin = () => { clearTimeout(spinT); cancelAnimationFrame(coastRAF); ringEl.classList.remove('spin'); };
   const select = (i, silent) => {
+    stopSpin();
     ringCur = ((i % CARTA.length) + CARTA.length) % CARTA.length;
     rot += ((((-ringCur * STEP) - rot) % 360) + 540) % 360 - 180;
     ringEl.style.setProperty('--rot', `${rot}deg`);
-    ringItems.forEach((el, k) => { el.classList.toggle('on', k === ringCur); el.setAttribute('aria-pressed', k === ringCur); });
-    tagsEl.innerHTML = CARTA[ringCur].t.map((t, k) => `<li style="--k:${k}">${t}</li>`).join('');
+    showCat();
     if (!silent) sound.play('tick');
   };
   select(0, true);
   $('#ring-prev').addEventListener('click', () => select(ringCur - 1));
   $('#ring-next').addEventListener('click', () => select(ringCur + 1));
-  let dragX = null, startRot = 0, moved = false;
-  stageEl.addEventListener('pointerdown', e => { dragX = e.clientX; startRot = rot; moved = false; });
+  // Girar la rueda: da unas vueltas y se para en una familia al azar
+  $('#ring-spin').addEventListener('click', () => {
+    stopSpin();
+    const n = CARTA.length;
+    let k = Math.floor(Math.random() * n);
+    if (k === ringCur) k = (k + 1 + Math.floor(Math.random() * (n - 1))) % n;
+    rot -= (reduce ? 0 : 1080) + (((k - ringCur) % n + n) % n) * STEP;
+    ringCur = k;
+    ringEl.classList.add('spin');
+    ringEl.style.setProperty('--rot', `${rot}deg`);
+    sound.play('tick');
+    spinT = setTimeout(() => { ringEl.classList.remove('spin'); showCat(); sound.play('win'); }, reduce ? 0 : 3300);
+  });
+  // Arrastrar: al soltar con fuerza sigue girando y frena sola
+  let dragX = null, startRot = 0, moved = false, lastX = 0, lastT = 0, vel = 0;
+  stageEl.addEventListener('pointerdown', e => { stopSpin(); dragX = lastX = e.clientX; lastT = performance.now(); vel = 0; startRot = rot; moved = false; });
   stageEl.addEventListener('pointermove', e => {
     if (dragX === null) return;
     const dx = e.clientX - dragX;
     if (!moved && Math.abs(dx) > 6) { moved = true; ringEl.classList.add('drag'); try { stageEl.setPointerCapture(e.pointerId); } catch (err) {} }
-    if (moved) { rot = startRot + dx * .32; ringEl.style.setProperty('--rot', `${rot}deg`); }
+    if (moved) {
+      const now = performance.now();
+      vel = .7 * vel + .3 * ((e.clientX - lastX) * .32 / Math.max(8, now - lastT) * 16);
+      lastX = e.clientX; lastT = now;
+      rot = startRot + dx * .32; ringEl.style.setProperty('--rot', `${rot}deg`);
+    }
   });
-  const endDrag = () => { if (dragX === null) return; dragX = null; if (moved) { ringEl.classList.remove('drag'); select(Math.round(-rot / STEP)); } };
+  const coast = () => {
+    vel *= .955;
+    rot += vel;
+    ringEl.style.setProperty('--rot', `${rot}deg`);
+    if (Math.abs(vel) > .25) coastRAF = requestAnimationFrame(coast);
+    else { ringEl.classList.remove('drag'); select(Math.round(-rot / STEP)); }
+  };
+  const endDrag = () => {
+    if (dragX === null) return;
+    dragX = null;
+    if (!moved) return;
+    if (!reduce && Math.abs(vel) > 1.5 && performance.now() - lastT < 120) coastRAF = requestAnimationFrame(coast);
+    else { ringEl.classList.remove('drag'); select(Math.round(-rot / STEP)); }
+  };
   stageEl.addEventListener('pointerup', endDrag);
   stageEl.addEventListener('pointercancel', endDrag);
   ringEl.addEventListener('click', e => { if (moved) { moved = false; return; } const b = e.target.closest('.ring-item'); if (b) select(+b.dataset.i); });
@@ -293,10 +330,7 @@
   const QS = [
     ['Llegas al Palacio. ¿Qué es lo primero que haces?', [['Me arrodillo y espero órdenes', 'sumiso'], ['Busco mi collar y mi correa', 'perro'], ['Miro sus tacones… y lo que hay dentro', 'pies'], ['Dejo un sobre con billetes en la entrada', 'pagafantas']]],
     ['Tu fantasía secreta es…', [['Que me vista de mujer y me use como su doncella', 'sissy'], ['Verla con otro mientras yo miro', 'cornudo'], ['Ser su mascota y comer de su cuenco', 'perro'], ['Darle todo lo que tengo', 'pagafantas']]],
-    ['¿Qué parte de la Diosa te obsesiona?', [['Sus pies', 'pies'], ['Su voz dándome órdenes', 'sumiso'], ['Su lencería… para ponérmela', 'sissy'], ['Su sonrisa cuando me humilla', 'cornudo']]],
-    ['Si te portas mal, prefieres…', [['A la jaula, sin rechistar', 'perro'], ['Limpiar el Palacio con cofia y delantal', 'sissy'], ['Pagar una buena multa', 'pagafantas'], ['Mirar sin poder tocar', 'cornudo']]],
-    ['¿Qué regalo le harías?', [['Unos tacones nuevos para adorarlos', 'pies'], ['Mi obediencia absoluta', 'sumiso'], ['Mi tarjeta de crédito', 'pagafantas'], ['Una cita con otro hombre', 'cornudo']]],
-    ['¿Dónde está tu sitio en el Palacio?', [['De rodillas, a su lado', 'sumiso'], ['En mi cama de perro, junto a su sillón', 'perro'], ['Bajo sus plantas, como alfombra', 'pies'], ['En la cocina, con mi uniforme', 'sissy']]]
+    ['¿Qué parte de la Diosa te obsesiona?', [['Sus pies', 'pies'], ['Su voz dándome órdenes', 'sumiso'], ['Su lencería… para ponérmela', 'sissy'], ['Su sonrisa cuando me humilla', 'cornudo']]]
   ];
   const quizEl = $('#quiz');
   let qi = 0, qScore = {};
@@ -442,7 +476,7 @@
   const DESEOS = ['Dominación mental', 'Humillación', 'Adoración de pies', 'Control de la castidad', 'Feminización', 'Spanking', 'Bondage', 'Látex', 'Cuckold', 'Trampling', 'Face-sitting', 'Strap-on', 'Findom', 'Juegos de rol', 'Animalización', 'Privación sensorial'];
   const chipsEl = $('#c-deseos');
   chipsEl.innerHTML = DESEOS.map(x => `<button type="button" class="chip" aria-pressed="false">${x}</button>`).join('');
-  const F = { alias: $('#c-alias'), limites: $('#c-limites'), palabra: $('#c-palabra'), dispo: $('#c-dispo'), adulto: $('#c-adulto') };
+  const F = { alias: $('#c-alias'), limites: $('#c-limites'), dispo: $('#c-dispo'), adulto: $('#c-adulto') };
   let tipo = 'presencial en el Palacio';
   const today = new Date().toLocaleDateString('es-ES', { day: 'numeric', month: 'long', year: 'numeric' });
   $('#doc-date').textContent = `Madrid, ${today}`;
@@ -451,7 +485,6 @@
     alias: F.alias.value.trim(),
     deseos: listEs($$('.chip[aria-pressed="true"]', chipsEl).map(b => b.textContent.toLowerCase())),
     limites: F.limites.value.trim(),
-    palabra: F.palabra.value.trim(),
     dispo: F.dispo.value.trim()
   });
   const setV = (k, val, fallback) => { const el = $(`.doc .v[data-k="${k}"]`); el.textContent = val || fallback; el.classList.toggle('empty', !val); };
@@ -461,7 +494,6 @@
     setV('tipo', tipo, tipo);
     setV('deseos', v.deseos, 'lo que Ella decida');
     setV('limites', v.limites, 'los que hablemos antes de empezar');
-    setV('palabra', v.palabra, '________');
     setV('dispo', v.dispo, 'cuando la Diosa ordene');
   }
   const clauses = () => {
@@ -471,7 +503,6 @@
       `Solicito una sesión ${tipo}.`,
       `Deseo que la Diosa disponga de mí para: ${v.deseos || 'lo que Ella decida'}.`,
       `Mis límites son: ${v.limites || 'los que hablemos antes de empezar'}. La Diosa los respetará siempre.`,
-      `Mi palabra de seguridad es «${v.palabra}». Al decirla, todo se detiene.`,
       `Estoy disponible: ${v.dispo || 'cuando la Diosa ordene'}.`,
       'Acepto obedecer, respetar sus normas y rendirle el tributo que Ella marque.'
     ];
@@ -486,7 +517,7 @@
     b.setAttribute('aria-pressed', b.getAttribute('aria-pressed') !== 'true');
     sound.play('tick'); updateDoc();
   });
-  [F.alias, F.limites, F.palabra, F.dispo].forEach(el => el.addEventListener('input', updateDoc));
+  [F.alias, F.limites, F.dispo].forEach(el => el.addEventListener('input', updateDoc));
   $('#c-form').addEventListener('submit', e => e.preventDefault());
 
   // Firma con el dedo o el ratón
@@ -524,7 +555,6 @@
   const err = $('#c-error');
   const validate = () => {
     if (!F.alias.value.trim()) return 'Dime cómo quieres que te llame.';
-    if (!F.palabra.value.trim()) return 'Necesitas una palabra de seguridad.';
     if (!signed) return 'Falta tu firma.';
     if (!F.adulto.checked) return 'Debes declarar que eres mayor de edad.';
     return '';
