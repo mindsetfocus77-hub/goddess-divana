@@ -114,13 +114,14 @@
   const uniforms = {
     uTex: { value: null }, uTime: { value: 0 }, uReveal: { value: 0 }, uFade: { value: 0 },
     uMouse: { value: new T.Vector2(.5, .55) }, uSize: { value: new T.Vector2(PW, PH) },
-    uTopC: { value: TOPC }, uRw: { value: W - 0.05 }, uPA: { value: PW / PH }, uIA: { value: 1154 / 1731 }
+    uTopC: { value: TOPC }, uRw: { value: W - 0.05 }, uPA: { value: PW / PH }, uIA: { value: 1154 / 1731 },
+    uCx: { value: 0 }, uCw: { value: 1 }
   };
   const photo = new T.Mesh(new T.PlaneGeometry(PW, PH), new T.ShaderMaterial({
     uniforms, transparent: true, depthWrite: false,
     vertexShader: 'varying vec2 vUv; void main(){ vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.); }',
     fragmentShader: `
-      uniform sampler2D uTex; uniform float uTime, uReveal, uFade, uTopC, uRw, uPA, uIA; uniform vec2 uMouse, uSize;
+      uniform sampler2D uTex; uniform float uTime, uReveal, uFade, uTopC, uRw, uPA, uIA, uCx, uCw; uniform vec2 uMouse, uSize;
       varying vec2 vUv;
       float hash(vec2 p){ return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
       float noise(vec2 p){ vec2 i = floor(p), f = fract(p); vec2 u = f * f * (3. - 2. * f);
@@ -136,6 +137,7 @@
         float k = uPA / uIA;
         vec2 iuv = uv;
         if (k < 1.) iuv.x = (iuv.x - .5) * k + .5; else iuv.y = (iuv.y - .5) / k + .5;
+        iuv.x = uCx + iuv.x * uCw;
         float ca = .002 + md * .004;
         vec3 col = vec3(texture2D(uTex, iuv + vec2(ca, 0.)).r, texture2D(uTex, iuv).g, texture2D(uTex, iuv - vec2(ca, 0.)).b);
         float edge = smoothstep(-.9, 0., d);
@@ -156,6 +158,7 @@
   loader.load(fallbackImg ? fallbackImg.src : 'img/portada.jpg', tex => {
     tex.minFilter = T.LinearFilter;
     uniforms.uTex.value = tex;
+    if (tex.image && tex.image.width) uniforms.uIA.value = tex.image.width / tex.image.height;
     done();
   }, undefined, () => done());
 
@@ -262,6 +265,70 @@
   addEventListener('divana:ready', startIntro);
   if (root.classList.contains('is-ready')) startIntro();
 
+  /* La puerta: al pincharla, su vídeo se reproduce dentro del arco y la cámara entra en la mazmorra.
+     El vídeo viene de WhatsApp con bandas negras a los lados: solo se usa la franja central. */
+  const doorBtn = document.getElementById('door-play');
+  const CROP = { x: 154 / 560, w: 258 / 560, a: 258 / 320 };
+  let video = null, videoTex = null, photoTex = null, photoIA = 1, door = 0, doorOn = false;
+  const placeHint = () => {
+    if (!doorBtn) return;
+    const keep = camera.position.clone();
+    stage.updateMatrixWorld(true);
+    camera.position.set(0, 0, DIST); camera.lookAt(0, 0, 0); camera.updateMatrixWorld();
+    const top = new T.Vector3(0, TOPC + W * .62, 0).applyMatrix4(stage.matrixWorld).project(camera);
+    camera.position.copy(keep); camera.updateMatrixWorld();
+    doorBtn.style.left = `${(top.x + 1) * 50}%`;
+    doorBtn.style.top = `${(1 - top.y) * 50}%`;
+  };
+  const doorStop = () => {
+    if (!doorOn) return;
+    doorOn = false;
+    video.pause();
+    uniforms.uTex.value = photoTex; uniforms.uCx.value = 0; uniforms.uCw.value = 1; uniforms.uIA.value = photoIA;
+    hero.classList.remove('door-on');
+    if (doorBtn) doorBtn.setAttribute('aria-pressed', 'false');
+    kick();
+  };
+  const doorPlay = () => {
+    if (doorOn) return doorStop();
+    if (!uniforms.uTex.value || !doorBtn) return;
+    if (!video) {
+      video = document.createElement('video');
+      video.src = doorBtn.dataset.video;
+      video.playsInline = true; video.setAttribute('playsinline', ''); video.preload = 'auto';
+      video.addEventListener('ended', doorStop);
+      videoTex = new T.VideoTexture(video);
+      videoTex.minFilter = T.LinearFilter;
+    }
+    photoTex = uniforms.uTex.value; photoIA = uniforms.uIA.value;
+    video.currentTime = 0;
+    video.muted = false;
+    video.play().catch(() => { video.muted = true; return video.play(); }).catch(() => {});
+    uniforms.uTex.value = videoTex; uniforms.uCx.value = CROP.x; uniforms.uCw.value = CROP.w; uniforms.uIA.value = CROP.a;
+    doorOn = true;
+    hero.classList.add('door-on');
+    doorBtn.setAttribute('aria-pressed', 'true');
+    kick();
+  };
+  if (doorBtn) {
+    doorBtn.hidden = false;
+    doorBtn.addEventListener('click', doorPlay);
+    hero.addEventListener('click', e => {
+      if (e.target.closest('a, button')) return;
+      const r = hero.getBoundingClientRect();
+      ndc.set(((e.clientX - r.left) / r.width) * 2 - 1, -((e.clientY - r.top) / r.height) * 2 + 1);
+      ray.setFromCamera(ndc, camera);
+      if (ray.intersectObject(photo)[0]) doorPlay();
+    });
+    hero.addEventListener('pointermove', e => {
+      if (e.target.closest('a, button')) return;
+      hero.style.cursor = ray.intersectObject(photo)[0] ? 'pointer' : '';
+    });
+    new IntersectionObserver(([e]) => { if (!e.isIntersecting) doorStop(); }).observe(hero);
+    placeHint();
+    addEventListener('resize', placeHint);
+  }
+
   /* Bucle de dibujo (solo mientras la portada se ve) */
   let visible = true, raf = 0;
   const clock = new T.Clock();
@@ -272,7 +339,7 @@
     const intro = introT0 < 0 ? -1 : (performance.now() - introT0) / 1000;
     const on = reduce ? (intro < 0 ? 0 : 1) : flickerOn(intro);
     neonMats.forEach(m => { m.opacity = m.userData.base * on; });
-    redLight.intensity = 3.4 * on + .4;
+    redLight.intensity = 2.4 * on + .4;
     uniforms.uReveal.value = intro < 0 ? 0 : reduce ? 1 : Math.min(1, ease(Math.max(0, intro - .5) / 2.4));
     uniforms.uTime.value = t;
     pUni.uTime.value = reduce ? 0 : t;
@@ -281,7 +348,9 @@
     cam.x += (target.x - cam.x) * .05;
     cam.y += (target.y - cam.y) * .05;
     const p = Math.min(1, Math.max(0, scrollY / (hero.offsetHeight || 1)));
-    camera.position.set(cam.x * .7, cam.y * .4, DIST - p * 2.6);
+    door += ((doorOn ? 1 : 0) - door) * (reduce ? 1 : .03);
+    const inside = doorOn && video && video.duration ? video.currentTime / video.duration : 0;
+    camera.position.set(cam.x * .7 * (1 - door * .7), cam.y * .4 * (1 - door * .7), DIST - p * 2.6 - door * (3.6 + inside * 1.4));
     camera.lookAt(cam.x * .25, cam.y * .15, 0);
     uniforms.uFade.value = Math.max(0, (p - .35) / .65) * .7;
 
@@ -291,7 +360,7 @@
       halo.material.opacity = .5 + Math.sin(t * .8) * .06;
     }
     renderer.render(scene, camera);
-    if (visible && !reduce) raf = requestAnimationFrame(render);
+    if (visible && (!reduce || doorOn || door > .01)) raf = requestAnimationFrame(render);
   };
   const kick = () => { if (!raf) raf = requestAnimationFrame(render); };
   new IntersectionObserver(([e]) => { visible = e.isIntersecting; if (visible) kick(); }).observe(hero);

@@ -81,7 +81,9 @@
   if (heelPath) heelPath.style.setProperty('--len', Math.ceil(heelPath.getTotalLength()));
   const gateSound = $('#gate-sound');
   gateSound.checked = sound.on;
-  const verified = store.get('divana-mayor-edad') === '1';
+  // La puerta sale en cada visita: al recargar, la web empieza siempre arriba, detrás de ella
+  if ('scrollRestoration' in history) history.scrollRestoration = 'manual';
+  if (!location.hash) scrollTo(0, 0);
 
   let shown = 0;
   const setP = v => { shown = Math.max(shown, v); $('#pct').textContent = Math.round(shown * 100); $('#bar').style.setProperty('--p', shown); };
@@ -96,12 +98,10 @@
   const finishGate = () => { gate.classList.add('done'); gate.setAttribute('aria-hidden', 'true'); syncLock(); onScroll(); };
   function afterLoad() {
     loader.classList.add('hide');
-    if (verified) { gate.classList.add('skip'); ready(); setTimeout(finishGate, 850); return; }
     gate.classList.add('ask');
     $('#gate-yes').focus({ preventScroll: true });
   }
   $('#gate-yes').addEventListener('click', () => {
-    store.set('divana-mayor-edad', '1');
     sound.set(gateSound.checked);
     if (gateSound.checked) { sound.play('crack'); setTimeout(() => sound.play('door'), 260); }
     gate.classList.remove('ask');
